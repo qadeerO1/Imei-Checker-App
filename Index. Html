@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IMEI CHECKER</title>
+<style>
+* {box-sizing:border-box;margin:0;padding:0;transition:background 0.3s,color 0.3s;}
+body {min-height:100vh;display:flex;flex-direction:column;align-items:center;font-family:'Segoe UI',Tahoma,Geneva,Verdana,sans-serif;background:linear-gradient(135deg,#74ebd5 0%,#ACB6E5 100%);color:#333;padding:20px;text-align:center;}
+body.dark {background:linear-gradient(135deg,#1e1e2f 0%,#2c2c3c 100%);color:#f1f1f1;}
+h1 {font-size:clamp(2rem,5vw,3rem);margin:20px 0 10px 0;}
+main {width:100%;max-width:400px;display:flex;flex-direction:column;align-items:center;}
+.imei-input {font-size:clamp(1rem,2.5vw,1.2rem);margin:8px 0;background:rgba(255,255,255,0.8);padding:10px 15px;border-radius:8px;width:100%;max-width:320px;box-shadow:0 2px 5px rgba(0,0,0,0.1);text-align:center;border:none;outline:none;}
+body.dark .imei-input {background:#3a3a4d;color:white;}
+.button-container {display:flex;flex-direction:column;align-items:center;width:100%;gap:12px;margin-top:20px;}
+button {padding:12px 24px;font-size:clamp(0.9rem,2vw,1rem);font-weight:bold;color:white;background:#5a67d8;border:none;border-radius:8px;cursor:pointer;box-shadow:0 4px 6px rgba(0,0,0,0.1);width:220px;}
+button:hover {background:#434190;transform:translateY(-2px);}
+#statusMsg {margin-top:15px;font-weight:bold;min-height:24px;opacity:0;transform:translateY(-10px);transition:all 0.5s ease;}
+#statusMsg.show {opacity:1;transform:translateY(0);}
+.red {color:red;}
+.green {color:limegreen;}
+.orange {color:orange;}
+</style>
+</head>
+<body>
+<h1>IMEI CHECKER</h1>
+<button onclick="toggleDarkMode()">🌙 Toggle Dark Mode</button>
+<main>
+<input id="imei1" class="imei-input" type="text" maxlength="15" placeholder="IMEI 1" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
+<input id="imei2" class="imei-input" type="text" maxlength="15" placeholder="IMEI 2" oninput="this.value=this.value.replace(/[^0-9]/g,'')">
+</main>
+<div id="storageUsage" style="margin-top:10px;font-weight:bold;"></div>
+<div class="button-container">
+<button onclick="generateIMEI()">Generate IMEIs</button>
+<button onclick="addToUsed()">Add to Used!</button>
+<button onclick="checkUsed()">Used??</button>
+<button onclick="showUsedIMEIs()">Show Used IMEIs</button>
+<button onclick="exportUsedIMEIs()">Export Used IMEIs</button>
+<div id="statusMsg"></div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-app.js";
+import { getDatabase, ref, set, get, child } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-database.js";
+import { getAnalytics } from "https://www.gstatic.com/firebasejs/12.10.0/firebase-analytics.js";
+
+// Firebase config
+const firebaseConfig = {
+  apiKey: "AIzaSyBiojOdwQnOX4yh7nRpnojZrGaHVcC-wRw",
+  authDomain: "imei-checker-26402.firebaseapp.com",
+  databaseURL: "https://imei-checker-26402-default-rtdb.firebaseio.com",
+  projectId: "imei-checker-26402",
+  storageBucket: "imei-checker-26402.firebasestorage.app",
+  messagingSenderId: "651818685429",
+  appId: "1:651818685429:web:35c0f89ec69d6acf5386bc",
+  measurementId: "G-Y3VS1SMH7D"
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const analytics = getAnalytics(app);
+const db = getDatabase(app);
+
+let statusTimeout;
+const storageAvailable = (() => {
+  try { localStorage.setItem("__test__", "__test__"); localStorage.removeItem("__test__"); return true; }
+  catch(e){ return false; }
+})();
+
+function getStorageItem(key){ return storageAvailable? localStorage.getItem(key):null; }
+function setStorageItem(key,value){ if(storageAvailable) localStorage.setItem(key,value); }
+
+window.onload = () => { updateStorageUsage(); loadTheme(); }
+
+function toggleDarkMode(){ document.body.classList.toggle("dark"); setStorageItem("theme",document.body.classList.contains("dark")?"dark":"light"); }
+function loadTheme(){ const t=getStorageItem("theme"); if(t==="dark")document.body.classList.add("dark"); }
+
+function updateStorageUsage(){
+  const used=getStorageItem("usedIMEIs")||"";
+  const bytes=new TextEncoder().encode(used).length;
+  const kb=(bytes/1024).toFixed(2);
+  document.getElementById("storageUsage").textContent = storageAvailable ? `Storage used: ${bytes} bytes (${kb} KB)` : "LocalStorage unavailable";
+}
+
+function generateIMEI(){
+  const rand=()=>{let i="35";for(let j=0;j<13;j++)i+=Math.floor(Math.random()*10);return i;};
+  document.getElementById('imei1').value=rand();
+  document.getElementById('imei2').value=rand();
+  clearStatus();
+}
+
+function getCurrentIMEIs(){ return { imei1:document.getElementById('imei1').value.trim(), imei2:document.getElementById('imei2').value.trim() }; }
+
+function loadUsedPairs(){ const u=getStorageItem("usedIMEIs"); return u?JSON.parse(u):[]; }
+function saveUsedPairs(p){ setStorageItem("usedIMEIs",JSON.stringify(p)); }
+
+async function addToUsed(){
+  const c=getCurrentIMEIs();
+  if(!c.imei1||!c.imei2||c.imei1.length!==15||c.imei2.length!==15){ setStatus("Enter valid 15-digit IMEIs first!", "red"); return; }
+
+  let used=loadUsedPairs();
+  if(used.some(p=>p.imei1===c.imei1 && p.imei2===c.imei2)){ setStatus("IMEI already marked used (local)", "orange"); return; }
+
+  // Save locally
+  used.push(c); saveUsedPairs(used);
+
+  // Save to Firebase Realtime Database
+  try{
+    const key=`${c.imei1}_${c.imei2}`;
+    await set(ref(db,"usedIMEIs/"+key), c);
+    setStatus("Saved locally + cloud ✅","green");
+  }catch(e){ setStatus("Saved locally, cloud failed ❌","orange"); }
+
+  updateStorageUsage();
+}
+
+async function checkUsed(){
+  const c=getCurrentIMEIs();
+  if(!c.imei1||!c.imei2||c.imei1.length!==15||c.imei2.length!==15){ setStatus("Enter valid 15-digit IMEIs first!", "red"); return; }
+
+  let used=loadUsedPairs();
+  if(used.some(p=>p.imei1===c.imei1 && p.imei2===c.imei2)){ setStatus("IMEI Already Used (Local)", "red"); return; }
+
+  // Check Firebase
+  try{
+    const snap=await get(child(ref(db),`usedIMEIs/${c.imei1}_${c.imei2}`));
+    if(snap.exists()){ setStatus("IMEI Already Used (Cloud)", "red"); }
+    else{ setStatus("IMEI not used anywhere ✅","green"); }
+  }catch(e){ setStatus("Cloud check failed ❌","orange"); }
+}
+
+function setStatus(msg,color){
+  const s=document.getElementById("statusMsg");
+  s.textContent=msg;
+  s.className=color; s.classList.add("show");
+  clearTimeout(statusTimeout);
+  statusTimeout=setTimeout(()=>{ s.classList.remove("show"); },3000);
+}
+
+function clearStatus(){ const s=document.getElementById("statusMsg"); s.textContent=""; s.className=""; s.classList.remove("show"); clearTimeout(statusTimeout); }
+
+function exportUsedIMEIs(){ const u=loadUsedPairs(); if(u.length===0){ setStatus("No used IMEIs to export","orange"); return; }
+const blob=new Blob([JSON.stringify(u,null,2)],{type:"application/json"});
+const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="used_imeis.json"; a.click(); URL.revokeObjectURL(a.href); setStatus("Export done","green"); }
+
+function showUsedIMEIs(){ const u=loadUsedPairs(); alert(JSON.stringify(u,null,2)); }
+
+</script>
+</body>
+</html>
